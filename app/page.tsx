@@ -7,8 +7,15 @@ import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { addDays, format } from '@/lib/utils';
 
+// Updated interfaces to use agent names
+interface Agent {
+  id: number;
+  name: string;
+}
+
 interface Absence {
-  agent: number;
+  agentId: number;
+  agentName: string;
   day: string;
   date: string;
 }
@@ -16,13 +23,15 @@ interface Absence {
 interface ScheduleRowProps {
   date: string;
   day?: string;
-  agent: number;
+  agent: Agent;
   hours: string;
 }
 
-interface WorkloadCount {
-  [key: number]: number;
-}
+const AGENTS: Agent[] = [
+  { id: 1, name: 'Odai' },
+  { id: 2, name: 'Mohammad' },
+  { id: 3, name: 'Majdi' }
+];
 
 const ScheduleRow = ({ date, day, agent, hours }: ScheduleRowProps) => {
   return (
@@ -39,7 +48,7 @@ const ScheduleRow = ({ date, day, agent, hours }: ScheduleRowProps) => {
       <td className="px-4 py-3">
         <div className="flex items-center gap-2">
           <User className="w-4 h-4 text-gray-500" />
-          <div className="font-medium">Agent {agent}</div>
+          <div className="font-medium">{agent.name}</div>
         </div>
       </td>
       <td className="px-4 py-3">
@@ -60,15 +69,12 @@ const SupportScheduleUI = () => {
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [futureDays, setFutureDays] = useState<number>(7);
 
-  const agents = [1, 2, 3];
-
-  // Helper function to get the base sequence for any given date
-  const getBaseSequenceForDate = (date: Date): number[] => {
+  const getBaseSequenceForDate = (date: Date): Agent[] => {
     const referenceDate = new Date('2023-01-01');
     const daysSinceReference = Math.floor((date.getTime() - referenceDate.getTime()) / (24 * 60 * 60 * 1000));
     let baseIndex = daysSinceReference % 3;
     
-    const sequence = [1, 2, 3];
+    const sequence = [...AGENTS];
     while (baseIndex > 0) {
       sequence.push(sequence.shift()!);
       baseIndex--;
@@ -88,14 +94,13 @@ const SupportScheduleUI = () => {
     return dates;
   };
 
-  // Modified schedule generation to handle dynamic sequence changes
   const generateSchedule = (startDate: Date, numberOfDays: number) => {
-    const schedule: Record<string, { agent: number; workingHours: string; date: string }> = {};
+    const schedule: Record<string, { agent: Agent; workingHours: string; date: string }> = {};
     const dates = generateDates(startDate, numberOfDays);
     
     let sequence = getBaseSequenceForDate(startDate);
     let currentIndex = 0;
-    let previousAgent: number | null = null;
+    let previousAgent: Agent | null = null;
 
     dates.forEach(date => {
         const dayName = format(date, 'EEEE');
@@ -103,33 +108,32 @@ const SupportScheduleUI = () => {
 
         if (dayName === 'Saturday') return;
 
-        // Get the expected agent for this date based on the rotation
         let scheduledAgent = sequence[currentIndex];
         const absence = absences.find(a => a.date === dateStr);
 
         if (absence) {
-            if (absence.agent === scheduledAgent) {
-                // If scheduled agent is absent, find the best replacement
+            if (absence.agentId === scheduledAgent.id) {
+                // Find best replacement (not previous day's agent)
                 const availableAgents = sequence.filter(agent => 
-                    agent !== absence.agent && 
-                    agent !== previousAgent
+                    agent.id !== absence.agentId && 
+                    (!previousAgent || agent.id !== previousAgent.id)
                 );
                 
                 scheduledAgent = availableAgents[0];
                 
-                // Adjust sequence to maintain spacing after absence
+                // Reorder sequence - absent agent will be scheduled when they return
                 sequence = [
-                    ...sequence.filter(a => a !== scheduledAgent && a !== absence.agent),
+                    ...sequence.filter(a => a.id !== scheduledAgent.id && a.id !== absence.agentId),
                     scheduledAgent,
-                    absence.agent
+                    sequence.find(a => a.id === absence.agentId)!
                 ];
                 currentIndex = 0;
             }
-        } else if (previousAgent === scheduledAgent) {
-            // Avoid consecutive days even in normal schedule
+        } else if (previousAgent && previousAgent.id === scheduledAgent.id) {
+            // Avoid consecutive days
             const nextAgent = sequence.find(agent => 
-                agent !== scheduledAgent && 
-                agent !== previousAgent
+                agent.id !== scheduledAgent.id && 
+                (!previousAgent || agent.id !== previousAgent.id)
             ) || sequence[(currentIndex + 1) % sequence.length];
             scheduledAgent = nextAgent;
         }
@@ -141,28 +145,44 @@ const SupportScheduleUI = () => {
         };
 
         previousAgent = scheduledAgent;
-        currentIndex = (sequence.indexOf(scheduledAgent) + 1) % sequence.length;
+        currentIndex = sequence.findIndex(a => a.id === scheduledAgent.id);
+        currentIndex = (currentIndex + 1) % sequence.length;
     });
 
     return schedule;
   };
 
-  // Rest of the component remains the same...
   const generateSaturdaySchedule = (startDate: Date, numberOfDays: number) => {
-    const schedule: Record<string, { agent: number; workingHours: string; date: string }> = {};
+    const schedule: Record<string, { agent: Agent; workingHours: string; date: string }> = {};
     const dates = generateDates(startDate, numberOfDays);
-    const sequence = getBaseSequenceForDate(startDate);
+    let sequence = getBaseSequenceForDate(startDate);
+
+    // Find first Saturday's agent
+    const firstSaturday = dates.find(date => format(date, 'EEEE') === 'Saturday');
+    if (firstSaturday) {
+      const startDate = new Date('2024-01-06'); // First Saturday of 2024
+      const saturdays = Math.floor((firstSaturday.getTime() - startDate.getTime()) / (7 * 24 * 60 * 60 * 1000));
+      const rotations = saturdays % AGENTS.length;
+      
+      // Rotate sequence to match historical Saturday rotations
+      for (let i = 0; i < rotations; i++) {
+        sequence.push(sequence.shift()!);
+      }
+    }
+
+    let currentIndex = 0;
 
     dates.forEach(date => {
       const dayName = format(date, 'EEEE');
       const dateStr = format(date, 'yyyy-MM-dd');
 
       if (dayName === 'Saturday') {
-        let assignedAgent = sequence[0];
+        let assignedAgent = sequence[currentIndex];
         const absence = absences.find(a => a.date === dateStr);
         
-        if (absence && absence.agent === assignedAgent) {
-          assignedAgent = sequence[1];
+        if (absence && absence.agentId === assignedAgent.id) {
+          // If scheduled agent is absent, use next agent in sequence
+          assignedAgent = sequence[(currentIndex + 1) % sequence.length];
         }
 
         schedule[dateStr] = {
@@ -171,39 +191,33 @@ const SupportScheduleUI = () => {
           date: dateStr
         };
         
-        // Rotate sequence for next Saturday
-        sequence.push(sequence.shift()!);
+        // Move to next agent for next Saturday
+        currentIndex = (currentIndex + 1) % sequence.length;
       }
     });
 
     return schedule;
   };
 
-  const getOvertimeStats = () => {
-    const stats = agents.map(agent => {
-      const count = Object.values(saturdaySchedule).filter(
-        shift => shift.agent === agent
-      ).length;
-      
-      return {
-        agent,
-        count
-      };
-    });
-    return stats;
+  const handleAbsenceSubmit = () => {
+    if (selectedAgent && selectedDay) {
+      const agent = AGENTS.find(a => a.id === selectedAgent);
+      if (agent) {
+        const date = format(new Date(selectedDay), 'yyyy-MM-dd');
+        setAbsences([...absences, {
+          agentId: agent.id,
+          agentName: agent.name,
+          day: format(new Date(selectedDay), 'EEEE'),
+          date
+        }]);
+        setSelectedAgent(null);
+        setSelectedDay(null);
+      }
+    }
   };
 
   const schedule = generateSchedule(new Date(selectedDate), Math.max(7, futureDays));
   const saturdaySchedule = generateSaturdaySchedule(new Date(selectedDate), Math.max(7, futureDays));
-
-  const handleAbsenceSubmit = () => {
-    if (selectedAgent && selectedDay) {
-      const date = format(new Date(selectedDay), 'yyyy-MM-dd');
-      setAbsences([...absences, { agent: selectedAgent, day: format(new Date(selectedDay), 'EEEE'), date }]);
-      setSelectedAgent(null);
-      setSelectedDay(null);
-    }
-  };
 
   const clearAbsences = () => {
     setAbsences([]);
@@ -237,19 +251,6 @@ const SupportScheduleUI = () => {
               />
             </div>
 
-            {/* Overtime Statistics */}
-            <div className="space-y-4">
-              <h3 className="text-lg font-medium">Saturday Overtime Statistics</h3>
-              <div className="grid grid-cols-3 gap-4">
-                {getOvertimeStats().map(({ agent, count }) => (
-                  <div key={agent} className="bg-gray-50 p-4 rounded-lg">
-                    <div className="font-medium">Agent {agent}</div>
-                    <div className="text-sm text-gray-600">{count} Saturday shifts</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
             {/* Absence Management */}
             <div className="space-y-4">
               <h3 className="text-lg font-medium">Report Absence</h3>
@@ -260,8 +261,8 @@ const SupportScheduleUI = () => {
                   className="p-2 border rounded"
                 >
                   <option value="">Select Agent</option>
-                  {agents.map(agent => (
-                    <option key={agent} value={agent}>Agent {agent}</option>
+                  {AGENTS.map(agent => (
+                    <option key={agent.id} value={agent.id}>{agent.name}</option>
                   ))}
                 </select>
                 <input
@@ -271,7 +272,7 @@ const SupportScheduleUI = () => {
                   className="p-2 border rounded"
                 />
                 <Button onClick={handleAbsenceSubmit}>Add Absence</Button>
-                <Button variant="outline" onClick={clearAbsences}>Clear All</Button>
+                <Button variant="outline" onClick={() => setAbsences([])}>Clear All</Button>
               </div>
             </div>
 
@@ -282,15 +283,15 @@ const SupportScheduleUI = () => {
                   Current Absences:
                   {absences.map((absence, index) => (
                     <div key={index}>
-                      Agent {absence.agent} - {absence.date} ({absence.day})
+                      {absence.agentName} - {absence.date} ({absence.day})
                     </div>
                   ))}
                 </AlertDescription>
               </Alert>
             )}
 
-            {/* Saturday Schedule */}
-            <div className="space-y-4">
+                        {/* Saturday Schedule */}
+                        <div className="space-y-4">
               <h3 className="text-lg font-medium">Saturday Schedule (Overtime)</h3>
               <div className="border rounded-lg overflow-hidden">
                 <table className="w-full">
@@ -306,8 +307,9 @@ const SupportScheduleUI = () => {
                       <ScheduleRow
                         key={date}
                         date={date}
+                        day="Saturday"
                         agent={info.agent}
-                        hours={`${info.workingHours} (${8} hrs overtime)`}
+                        hours={`${info.workingHours} (8 hrs overtime)`}
                       />
                     ))}
                   </tbody>
