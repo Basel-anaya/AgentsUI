@@ -94,110 +94,168 @@ const SupportScheduleUI = () => {
     return dates;
   };
 
+  const getAssignedAgent = (date: Date): Agent => {
+    // Get the month and year
+    const month = date.getMonth();
+    const year = date.getFullYear();
+    
+    // Calculate months since a reference point (e.g., January 2024)
+    const referenceDate = new Date(2024, 0, 1); // January 1, 2024
+    const monthsSinceReference = (year - referenceDate.getFullYear()) * 12 + month - referenceDate.getMonth();
+    
+    // Get base agent for this month
+    const baseAgentIndex = monthsSinceReference % AGENTS.length;
+    
+    // Calculate week number within the month
+    const firstDayOfMonth = new Date(year, month, 1);
+    const firstSunday = new Date(year, month, 1 + (7 - firstDayOfMonth.getDay()) % 7);
+    const weekInMonth = Math.floor((date.getDate() - firstSunday.getDate()) / 7);
+    
+    // Rotate through agents based on week within the month
+    const finalAgentIndex = (baseAgentIndex + weekInMonth) % AGENTS.length;
+    return AGENTS[finalAgentIndex];
+  };
+
+  const getWeekNumber = (date: Date): number => {
+    const start = new Date(date.getFullYear(), 0, 1);
+    const diff = date.getTime() - start.getTime();
+    const oneWeek = 1000 * 60 * 60 * 24 * 7;
+    return Math.floor(diff / oneWeek);
+  };
+
+  const getWeekInfo = (date: Date): { weekStartDate: Date; agentIndex: number } => {
+    // Get Sunday of the current week
+    const sunday = new Date(date);
+    sunday.setDate(date.getDate() - date.getDay());
+    
+    // Get the current week number within the current month
+    const monthStart = new Date(date.getFullYear(), date.getMonth(), 1);
+    const firstSunday = new Date(monthStart);
+    firstSunday.setDate(monthStart.getDate() + (7 - monthStart.getDay()) % 7);
+    
+    // Calculate which agent should be working based on the current week
+    const weekOfMonth = Math.floor((date.getDate() - firstSunday.getDate()) / 7);
+    const monthOffset = date.getMonth() % AGENTS.length;
+    const agentIndex = (monthOffset + weekOfMonth) % AGENTS.length;
+    
+    return {
+      weekStartDate: sunday,
+      agentIndex
+    };
+  };
+
   const generateSchedule = (startDate: Date, numberOfDays: number) => {
     const schedule: Record<string, { agent: Agent; workingHours: string; date: string }> = {};
     const dates = generateDates(startDate, numberOfDays);
     
-    let sequence = getBaseSequenceForDate(startDate);
-    let currentIndex = 0;
-    let previousAgent: Agent | null = null;
-
+    // Get weeks map first
+    const weeksMap = new Map<string, Agent>();
+    let currentAgentIndex = 0;
+    
+    // First pass: Assign base weeks
     dates.forEach(date => {
-        const dayName = format(date, 'EEEE');
-        const dateStr = format(date, 'yyyy-MM-dd');
-
-        if (dayName === 'Saturday') return;
-
-        let scheduledAgent = sequence[currentIndex];
-        const absence = absences.find(a => a.date === dateStr);
-
-        if (absence) {
-            if (absence.agentId === scheduledAgent.id) {
-                // Find best replacement (not previous day's agent)
-                const availableAgents = sequence.filter(agent => 
-                    agent.id !== absence.agentId && 
-                    (!previousAgent || agent.id !== previousAgent.id)
-                );
-                
-                scheduledAgent = availableAgents[0];
-                
-                // Reorder sequence - absent agent will be scheduled when they return
-                sequence = [
-                    ...sequence.filter(a => a.id !== scheduledAgent.id && a.id !== absence.agentId),
-                    scheduledAgent,
-                    sequence.find(a => a.id === absence.agentId)!
-                ];
-                currentIndex = 0;
-            }
-        } else if (previousAgent && previousAgent.id === scheduledAgent.id) {
-            // Avoid consecutive days
-            const nextAgent = sequence.find(agent => 
-                agent.id !== scheduledAgent.id && 
-                (!previousAgent || agent.id !== previousAgent.id)
-            ) || sequence[(currentIndex + 1) % sequence.length];
-            scheduledAgent = nextAgent;
-        }
-
-        schedule[dateStr] = {
-            agent: scheduledAgent,
-            workingHours: '7:30 - 3:30',
-            date: dateStr
-        };
-
-        previousAgent = scheduledAgent;
-        currentIndex = sequence.findIndex(a => a.id === scheduledAgent.id);
-        currentIndex = (currentIndex + 1) % sequence.length;
-    });
-
-    return schedule;
-  };
-
-  const generateSaturdaySchedule = (startDate: Date, numberOfDays: number) => {
-    const schedule: Record<string, { agent: Agent; workingHours: string; date: string }> = {};
-    const dates = generateDates(startDate, numberOfDays);
-    let sequence = getBaseSequenceForDate(startDate);
-
-    // Find first Saturday's agent
-    const firstSaturday = dates.find(date => format(date, 'EEEE') === 'Saturday');
-    if (firstSaturday) {
-      const startDate = new Date('2024-01-06'); // First Saturday of 2024
-      const saturdays = Math.floor((firstSaturday.getTime() - startDate.getTime()) / (7 * 24 * 60 * 60 * 1000));
-      const rotations = saturdays % AGENTS.length;
+      const weekStart = new Date(date);
+      weekStart.setDate(date.getDate() - date.getDay()); // Get Sunday
+      const weekStartStr = format(weekStart, 'yyyy-MM-dd');
       
-      // Rotate sequence to match historical Saturday rotations
-      for (let i = 0; i < rotations; i++) {
-        sequence.push(sequence.shift()!);
+      if (!weeksMap.has(weekStartStr)) {
+        weeksMap.set(weekStartStr, AGENTS[currentAgentIndex]);
+        currentAgentIndex = (currentAgentIndex + 1) % AGENTS.length;
       }
-    }
-
-    let currentIndex = 0;
-
+    });
+  
+    // Second pass: Handle absences and cascading coverage
+    const absenceCascades = new Map<string, Agent[]>(); // Track coverage chains by weekday
+  
     dates.forEach(date => {
       const dayName = format(date, 'EEEE');
       const dateStr = format(date, 'yyyy-MM-dd');
-
-      if (dayName === 'Saturday') {
-        let assignedAgent = sequence[currentIndex];
-        const absence = absences.find(a => a.date === dateStr);
+      const weekStart = new Date(date);
+      weekStart.setDate(date.getDate() - date.getDay());
+      const weekStartStr = format(weekStart, 'yyyy-MM-dd');
+  
+      if (dayName === 'Saturday') return;
+  
+      let assignedAgent = weeksMap.get(weekStartStr)!;
+      const absence = absences.find(a => a.date === dateStr);
+  
+      if (absence && absence.agentId === assignedAgent.id) {
+        // Start or continue cascade
+        const nextAgent = AGENTS[(AGENTS.findIndex(a => a.id === assignedAgent.id) + 1) % AGENTS.length];
         
-        if (absence && absence.agentId === assignedAgent.id) {
-          // If scheduled agent is absent, use next agent in sequence
-          assignedAgent = sequence[(currentIndex + 1) % sequence.length];
+        if (!absenceCascades.has(dayName)) {
+          absenceCascades.set(dayName, [assignedAgent, nextAgent]);
         }
-
-        schedule[dateStr] = {
-          agent: assignedAgent,
-          workingHours: '9:30 - 5:30',
-          date: dateStr
-        };
         
-        // Move to next agent for next Saturday
-        currentIndex = (currentIndex + 1) % sequence.length;
+        assignedAgent = nextAgent;
+      } else if (absenceCascades.has(dayName)) {
+        // Check if this agent is part of a cascade
+        const cascade = absenceCascades.get(dayName)!;
+        const agentIndex = cascade.findIndex(a => a.id === assignedAgent.id);
+        
+        if (agentIndex >= 0) {
+          // This agent should be covered by next in sequence
+          const nextAgent = AGENTS[(AGENTS.findIndex(a => a.id === assignedAgent.id) + 1) % AGENTS.length];
+          assignedAgent = nextAgent;
+          
+          // Update cascade array
+          if (!cascade.find(a => a.id === nextAgent.id)) {
+            cascade.push(nextAgent);
+            absenceCascades.set(dayName, cascade);
+          }
+        }
       }
+  
+      schedule[dateStr] = {
+        agent: assignedAgent,
+        workingHours: '7:30 - 3:30',
+        date: dateStr
+      };
     });
-
+  
     return schedule;
   };
+  
+
+const generateSaturdaySchedule = (startDate: Date, numberOfDays: number) => {
+  const schedule: Record<string, { agent: Agent; workingHours: string; date: string }> = {};
+  const dates = generateDates(startDate, numberOfDays);
+  
+  // Track Saturday assignments for balanced distribution
+  const saturdayCount: Record<number, number> = {};
+  AGENTS.forEach(agent => saturdayCount[agent.id] = 0);
+  
+  dates.forEach(date => {
+    const dayName = format(date, 'EEEE');
+    const dateStr = format(date, 'yyyy-MM-dd');
+
+    if (dayName === 'Saturday') {
+      // Find agent with least Saturday assignments
+      const nextAgent = AGENTS
+        .sort((a, b) => saturdayCount[a.id] - saturdayCount[b.id])[0];
+      
+      let assignedAgent = nextAgent;
+      const absence = absences.find(a => a.date === dateStr);
+      
+      if (absence && absence.agentId === assignedAgent.id) {
+        // Assign to next agent with least Saturdays
+        assignedAgent = AGENTS
+          .filter(a => a.id !== absence.agentId)
+          .sort((a, b) => saturdayCount[a.id] - saturdayCount[b.id])[0];
+      }
+
+      saturdayCount[assignedAgent.id]++;
+      
+      schedule[dateStr] = {
+        agent: assignedAgent,
+        workingHours: '9:30 - 5:30',
+        date: dateStr
+      };
+    }
+  });
+
+  return schedule;
+};
 
   const handleAbsenceSubmit = () => {
     if (selectedAgent && selectedDay) {
@@ -251,6 +309,25 @@ const SupportScheduleUI = () => {
               />
             </div>
 
+            {/* Overtime Statistics */}
+            <div className="space-y-4">
+              <h3 className="text-lg font-medium">Saturday Overtime Statistics</h3>
+              <div className="grid grid-cols-3 gap-4">
+                {AGENTS.map(agent => {
+                  const saturdayCount = Object.values(saturdaySchedule)
+                    .filter(shift => shift.agent.id === agent.id).length;
+                  return (
+                    <div key={agent.id} className="bg-gray-50 p-4 rounded-lg">
+                      <div className="font-medium">{agent.name}</div>
+                      <div className="text-sm text-gray-600">
+                        {saturdayCount} Saturday shift{saturdayCount !== 1 ? 's' : ''}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
             {/* Absence Management */}
             <div className="space-y-4">
               <h3 className="text-lg font-medium">Report Absence</h3>
@@ -290,8 +367,8 @@ const SupportScheduleUI = () => {
               </Alert>
             )}
 
-                        {/* Saturday Schedule */}
-                        <div className="space-y-4">
+            {/* Saturday Schedule */}
+            <div className="space-y-4">
               <h3 className="text-lg font-medium">Saturday Schedule (Overtime)</h3>
               <div className="border rounded-lg overflow-hidden">
                 <table className="w-full">
