@@ -13,12 +13,6 @@ interface Absence {
   date: string;
 }
 
-interface OvertimeRecord {
-  agent: number;
-  date: string;
-  hours: string;
-}
-
 interface ScheduleRowProps {
   date: string;
   day?: string;
@@ -66,7 +60,6 @@ const SupportScheduleUI = () => {
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [futureDays, setFutureDays] = useState<number>(7);
 
-  const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday'];
   const agents = [1, 2, 3];
 
   // Helper function to get the base sequence for any given date
@@ -93,24 +86,6 @@ const SupportScheduleUI = () => {
       }
     }
     return dates;
-  };
-
-  // New function to determine optimal sequence based on workload
-  const getOptimalSequence = (workloadCounts: WorkloadCount, absentAgent?: number): number[] => {
-    const availableAgents = agents.filter(agent => agent !== absentAgent);
-    
-    // Sort agents by workload (least to most)
-    const sortedAgents = [...availableAgents].sort((a, b) => 
-      (workloadCounts[a] || 0) - (workloadCounts[b] || 0)
-    );
-
-    // If there's an absent agent, they'll be added back to the sequence later
-    if (absentAgent) {
-      return sortedAgents;
-    }
-
-    // For normal rotation, ensure even distribution
-    return agents.sort((a, b) => (workloadCounts[a] || 0) - (workloadCounts[b] || 0));
   };
 
   // Modified schedule generation to handle dynamic sequence changes
