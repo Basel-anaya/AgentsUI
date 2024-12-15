@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from 'react';
-import { Calendar, User, Clock, AlertCircle } from 'lucide-react';
+import { Calendar, User, Clock } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -62,23 +62,20 @@ const SupportScheduleUI = () => {
   const today = new Date();
   const [selectedDate, setSelectedDate] = useState<string>(format(today, 'yyyy-MM-dd'));
   const [absences, setAbsences] = useState<Absence[]>([]);
-  const [overtimeRecords, setOvertimeRecords] = useState<OvertimeRecord[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<number | null>(null);
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
-  const [futureDays, setFutureDays] = useState<number>(7); // Default to showing a week
+  const [futureDays, setFutureDays] = useState<number>(7);
 
   const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday'];
   const agents = [1, 2, 3];
 
   // Helper function to get the base sequence for any given date
   const getBaseSequenceForDate = (date: Date): number[] => {
-    // Use a reference date that's always a Sunday to calculate the sequence
-    const referenceDate = new Date('2023-01-01'); // A known Sunday
+    const referenceDate = new Date('2023-01-01');
     const daysSinceReference = Math.floor((date.getTime() - referenceDate.getTime()) / (24 * 60 * 60 * 1000));
     let baseIndex = daysSinceReference % 3;
     
-    // Create sequence starting from the calculated position
-    let sequence = [1, 2, 3];
+    const sequence = [1, 2, 3];
     while (baseIndex > 0) {
       sequence.push(sequence.shift()!);
       baseIndex--;
@@ -118,14 +115,11 @@ const SupportScheduleUI = () => {
 
   // Modified schedule generation to handle dynamic sequence changes
   const generateSchedule = (startDate: Date, numberOfDays: number) => {
-    let schedule: Record<string, { agent: number; workingHours: string; date: string }> = {};
+    const schedule: Record<string, { agent: number; workingHours: string; date: string }> = {};
     const dates = generateDates(startDate, numberOfDays);
     
-    // Get initial sequence based on start date
     let sequence = getBaseSequenceForDate(startDate);
     let currentIndex = 0;
-
-    let previousDate: string | null = null;
     let previousAgent: number | null = null;
 
     dates.forEach(date => {
@@ -171,7 +165,6 @@ const SupportScheduleUI = () => {
             date: dateStr
         };
 
-        previousDate = dateStr;
         previousAgent = scheduledAgent;
         currentIndex = (sequence.indexOf(scheduledAgent) + 1) % sequence.length;
     });
@@ -181,9 +174,9 @@ const SupportScheduleUI = () => {
 
   // Rest of the component remains the same...
   const generateSaturdaySchedule = (startDate: Date, numberOfDays: number) => {
-    let schedule: Record<string, { agent: number; workingHours: string; date: string }> = {};
+    const schedule: Record<string, { agent: number; workingHours: string; date: string }> = {};
     const dates = generateDates(startDate, numberOfDays);
-    let sequence = getBaseSequenceForDate(startDate);
+    const sequence = getBaseSequenceForDate(startDate);
 
     dates.forEach(date => {
       const dayName = format(date, 'EEEE');
